@@ -14,9 +14,11 @@
 
 package casbin
 
+import "github.com/Knetic/govaluate"
+
 // GetAllSubjects gets the list of subjects that show up in the current policy.
 func (e *Enforcer) GetAllSubjects() []string {
-	return e.GetAllNamedSubjects("p")
+	return e.model.GetValuesForFieldInPolicyAllTypes("p", 0)
 }
 
 // GetAllNamedSubjects gets the list of subjects that show up in the current named policy.
@@ -26,7 +28,7 @@ func (e *Enforcer) GetAllNamedSubjects(ptype string) []string {
 
 // GetAllObjects gets the list of objects that show up in the current policy.
 func (e *Enforcer) GetAllObjects() []string {
-	return e.GetAllNamedObjects("p")
+	return e.model.GetValuesForFieldInPolicyAllTypes("p", 1)
 }
 
 // GetAllNamedObjects gets the list of objects that show up in the current named policy.
@@ -36,7 +38,7 @@ func (e *Enforcer) GetAllNamedObjects(ptype string) []string {
 
 // GetAllActions gets the list of actions that show up in the current policy.
 func (e *Enforcer) GetAllActions() []string {
-	return e.GetAllNamedActions("p")
+	return e.model.GetValuesForFieldInPolicyAllTypes("p", 2)
 }
 
 // GetAllNamedActions gets the list of actions that show up in the current named policy.
@@ -46,7 +48,7 @@ func (e *Enforcer) GetAllNamedActions(ptype string) []string {
 
 // GetAllRoles gets the list of roles that show up in the current policy.
 func (e *Enforcer) GetAllRoles() []string {
-	return e.GetAllNamedRoles("g")
+	return e.model.GetValuesForFieldInPolicyAllTypes("g", 1)
 }
 
 // GetAllNamedRoles gets the list of roles that show up in the current named policy.
@@ -120,6 +122,13 @@ func (e *Enforcer) AddPolicy(params ...interface{}) (bool, error) {
 	return e.AddNamedPolicy("p", params...)
 }
 
+// AddPolicies adds authorization rules to the current policy.
+// If the rule already exists, the function returns false for the corresponding rule and the rule will not be added.
+// Otherwise the function returns true for the corresponding rule by adding the new rule.
+func (e *Enforcer) AddPolicies(rules [][]string) (bool, error) {
+	return e.AddNamedPolicies("p", rules)
+}
+
 // AddNamedPolicy adds an authorization rule to the current named policy.
 // If the rule already exists, the function returns false and the rule will not be added.
 // Otherwise the function returns true by adding the new rule.
@@ -135,9 +144,21 @@ func (e *Enforcer) AddNamedPolicy(ptype string, params ...interface{}) (bool, er
 	return e.addPolicy("p", ptype, policy)
 }
 
+// AddNamedPolicies adds authorization rules to the current named policy.
+// If the rule already exists, the function returns false for the corresponding rule and the rule will not be added.
+// Otherwise the function returns true for the corresponding by adding the new rule.
+func (e *Enforcer) AddNamedPolicies(ptype string, rules [][] string) (bool, error) {
+	return e.addPolicies("p", ptype, rules)
+}
+
 // RemovePolicy removes an authorization rule from the current policy.
 func (e *Enforcer) RemovePolicy(params ...interface{}) (bool, error) {
 	return e.RemoveNamedPolicy("p", params...)
+}
+
+// RemovePolicies removes authorization rules from the current policy.
+func (e *Enforcer) RemovePolicies(rules [][]string) (bool, error) {
+	return e.RemoveNamedPolicies("p", rules)
 }
 
 // RemoveFilteredPolicy removes an authorization rule from the current policy, field filters can be specified.
@@ -156,6 +177,11 @@ func (e *Enforcer) RemoveNamedPolicy(ptype string, params ...interface{}) (bool,
 	}
 
 	return e.removePolicy("p", ptype, policy)
+}
+
+// RemoveNamedPolicies removes authorization rules from the current named policy.
+func (e *Enforcer) RemoveNamedPolicies(ptype string, rules [][] string) (bool, error) {
+	return e.removePolicies("p", ptype, rules)
 }
 
 // RemoveFilteredNamedPolicy removes an authorization rule from the current named policy, field filters can be specified.
@@ -189,6 +215,13 @@ func (e *Enforcer) AddGroupingPolicy(params ...interface{}) (bool, error) {
 	return e.AddNamedGroupingPolicy("g", params...)
 }
 
+// AddGroupingPolicies adds role inheritance rulea to the current policy.
+// If the rule already exists, the function returns false for the corresponding policy rule and the rule will not be added.
+// Otherwise the function returns true for the corresponding policy rule by adding the new rule.
+func (e *Enforcer) AddGroupingPolicies(rules [][]string) (bool, error) {
+	return e.AddNamedGroupingPolicies("g", rules)
+}
+
 // AddNamedGroupingPolicy adds a named role inheritance rule to the current policy.
 // If the rule already exists, the function returns false and the rule will not be added.
 // Otherwise the function returns true by adding the new rule.
@@ -206,15 +239,24 @@ func (e *Enforcer) AddNamedGroupingPolicy(ptype string, params ...interface{}) (
 		ruleAdded, err = e.addPolicy("g", ptype, policy)
 	}
 
-	if e.autoBuildRoleLinks {
-		e.BuildRoleLinks()
-	}
 	return ruleAdded, err
+}
+
+// AddNamedGroupingPolicies adds named role inheritance rules to the current policy.
+// If the rule already exists, the function returns false for the corresponding policy rule and the rule will not be added.
+// Otherwise the function returns true for the corresponding policy rule by adding the new rule.
+func (e *Enforcer) AddNamedGroupingPolicies(ptype string, rules [][]string) (bool, error) {
+	return e.addPolicies("g", ptype, rules)
 }
 
 // RemoveGroupingPolicy removes a role inheritance rule from the current policy.
 func (e *Enforcer) RemoveGroupingPolicy(params ...interface{}) (bool, error) {
 	return e.RemoveNamedGroupingPolicy("g", params...)
+}
+
+// RemoveGroupingPolicies removes role inheritance rulea from the current policy.
+func (e *Enforcer) RemoveGroupingPolicies(rules [][]string) (bool, error) {
+	return e.RemoveNamedGroupingPolicies("g", rules)
 }
 
 // RemoveFilteredGroupingPolicy removes a role inheritance rule from the current policy, field filters can be specified.
@@ -237,23 +279,20 @@ func (e *Enforcer) RemoveNamedGroupingPolicy(ptype string, params ...interface{}
 		ruleRemoved, err = e.removePolicy("g", ptype, policy)
 	}
 
-	if e.autoBuildRoleLinks {
-		e.BuildRoleLinks()
-	}
 	return ruleRemoved, err
+}
+
+// RemoveNamedGroupingPolicies removes role inheritance rules from the current named policy.
+func (e *Enforcer) RemoveNamedGroupingPolicies(ptype string, rules [][]string) (bool, error) {
+	return e.removePolicies("g", ptype, rules)
 }
 
 // RemoveFilteredNamedGroupingPolicy removes a role inheritance rule from the current named policy, field filters can be specified.
 func (e *Enforcer) RemoveFilteredNamedGroupingPolicy(ptype string, fieldIndex int, fieldValues ...string) (bool, error) {
-	ruleRemoved, err := e.removeFilteredPolicy("g", ptype, fieldIndex, fieldValues...)
-
-	if e.autoBuildRoleLinks {
-		e.BuildRoleLinks()
-	}
-	return ruleRemoved, err
+	return e.removeFilteredPolicy("g", ptype, fieldIndex, fieldValues...)
 }
 
 // AddFunction adds a customized function.
-func (e *Enforcer) AddFunction(name string, function func(args ...interface{}) (interface{}, error)) {
+func (e *Enforcer) AddFunction(name string, function govaluate.ExpressionFunction) {
 	e.fm.AddFunction(name, function)
 }

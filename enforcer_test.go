@@ -15,10 +15,12 @@
 package casbin
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/casbin/casbin/v2/model"
-	"github.com/casbin/casbin/v2/persist/file-adapter"
+	fileadapter "github.com/casbin/casbin/v2/persist/file-adapter"
+	"github.com/casbin/casbin/v2/util"
 )
 
 func TestKeyMatchModelInMemory(t *testing.T) {
@@ -339,6 +341,30 @@ func TestRoleLinks(t *testing.T) {
 	e.Enforce("user501", "data9", "read")
 }
 
+func TestEnforceConcurrency(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("Enforce is not concurrent")
+		}
+	}()
+
+	e, _ := NewEnforcer("examples/rbac_model.conf")
+	e.LoadModel()
+
+	var wg sync.WaitGroup
+
+	// Simulate concurrency (maybe use a timer?)
+	for i := 1; i <= 10000; i++ {
+		wg.Add(1)
+		go func() {
+			e.Enforce("user501", "data9", "read")
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+}
+
 func TestGetAndSetModel(t *testing.T) {
 	e, _ := NewEnforcer("examples/basic_model.conf", "examples/basic_policy.csv")
 	e2, _ := NewEnforcer("examples/basic_with_root_model.conf", "examples/basic_policy.csv")
@@ -393,4 +419,59 @@ func TestInitEmpty(t *testing.T) {
 	e.LoadPolicy()
 
 	testEnforce(t, e, "alice", "/alice_data/resource1", "GET", true)
+}
+func testEnforceEx(t *testing.T, e *Enforcer, sub string, obj string, act string, res []string) {
+	t.Helper()
+	_, myRes, _ := e.EnforceEx(sub, obj, act)
+
+	if ok := util.ArrayEquals(res, myRes); !ok {
+		t.Error("Key: ", myRes, ", supposed to be ", res)
+	}
+}
+
+func TestEnforceEx(t *testing.T) {
+	e, _ := NewEnforcer("examples/basic_model.conf", "examples/basic_policy.csv")
+
+	testEnforceEx(t, e, "alice", "data1", "read", []string{"alice", "data1", "read"})
+	testEnforceEx(t, e, "alice", "data1", "write", []string{})
+	testEnforceEx(t, e, "alice", "data2", "read", []string{})
+	testEnforceEx(t, e, "alice", "data2", "write", []string{})
+	testEnforceEx(t, e, "bob", "data1", "read", []string{})
+	testEnforceEx(t, e, "bob", "data1", "write", []string{})
+	testEnforceEx(t, e, "bob", "data2", "read", []string{})
+	testEnforceEx(t, e, "bob", "data2", "write", []string{"bob", "data2", "write"})
+
+	e, _ = NewEnforcer("examples/rbac_model.conf", "examples/rbac_policy.csv")
+
+	testEnforceEx(t, e, "alice", "data1", "read", []string{"alice", "data1", "read"})
+	testEnforceEx(t, e, "alice", "data1", "write", []string{})
+	testEnforceEx(t, e, "alice", "data2", "read", []string{"data2_admin", "data2", "read"})
+	testEnforceEx(t, e, "alice", "data2", "write", []string{"data2_admin", "data2", "write"})
+	testEnforceEx(t, e, "bob", "data1", "read", []string{})
+	testEnforceEx(t, e, "bob", "data1", "write", []string{})
+	testEnforceEx(t, e, "bob", "data2", "read", []string{})
+	testEnforceEx(t, e, "bob", "data2", "write", []string{"bob", "data2", "write"})
+
+	e, _ = NewEnforcer("examples/priority_model.conf", "examples/priority_policy.csv")
+
+	testEnforceEx(t, e, "alice", "data1", "read", []string{"alice", "data1", "read", "allow"})
+	testEnforceEx(t, e, "alice", "data1", "write", []string{"data1_deny_group", "data1", "write", "deny"})
+	testEnforceEx(t, e, "alice", "data2", "read", []string{})
+	testEnforceEx(t, e, "alice", "data2", "write", []string{})
+	testEnforceEx(t, e, "bob", "data1", "write", []string{})
+	testEnforceEx(t, e, "bob", "data2", "read", []string{"data2_allow_group", "data2", "read", "allow"})
+	testEnforceEx(t, e, "bob", "data2", "write", []string{"bob", "data2", "write", "deny"})
+}
+
+func TestEnforceExLog(t *testing.T) {
+	e, _ := NewEnforcer("examples/basic_model.conf", "examples/basic_policy.csv", true)
+
+	testEnforceEx(t, e, "alice", "data1", "read", []string{"alice", "data1", "read"})
+	testEnforceEx(t, e, "alice", "data1", "write", []string{})
+	testEnforceEx(t, e, "alice", "data2", "read", []string{})
+	testEnforceEx(t, e, "alice", "data2", "write", []string{})
+	testEnforceEx(t, e, "bob", "data1", "read", []string{})
+	testEnforceEx(t, e, "bob", "data1", "write", []string{})
+	testEnforceEx(t, e, "bob", "data2", "read", []string{})
+	testEnforceEx(t, e, "bob", "data2", "write", []string{"bob", "data2", "write"})
 }

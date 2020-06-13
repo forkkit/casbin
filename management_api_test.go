@@ -154,6 +154,28 @@ func TestModifyPolicyAPI(t *testing.T) {
 	e.AddPolicy("eve", "data3", "read")
 	e.AddPolicy("eve", "data3", "read")
 
+	rules := [][]string{
+		{"jack", "data4", "read"},
+		{"katy", "data4", "write"},
+		{"leyo", "data4", "read"},
+		{"ham", "data4", "write"},
+	}
+
+	e.AddPolicies(rules)
+	e.AddPolicies(rules)
+
+	testGetPolicy(t, e, [][]string{
+		{"data2_admin", "data2", "read"},
+		{"data2_admin", "data2", "write"},
+		{"eve", "data3", "read"},
+		{"jack", "data4", "read"},
+		{"katy", "data4", "write"},
+		{"leyo", "data4", "read"},
+		{"ham", "data4", "write"}})
+
+	e.RemovePolicies(rules)
+	e.RemovePolicies(rules)
+
 	namedPolicy := []string{"eve", "data3", "read"}
 	e.RemoveNamedPolicy("p", namedPolicy)
 	e.AddNamedPolicy("p", namedPolicy)
@@ -171,38 +193,56 @@ func TestModifyPolicyAPI(t *testing.T) {
 func TestModifyGroupingPolicyAPI(t *testing.T) {
 	e, _ := NewEnforcer("examples/rbac_model.conf", "examples/rbac_policy.csv")
 
-	testGetRoles(t, e, "alice", []string{"data2_admin"})
-	testGetRoles(t, e, "bob", []string{})
-	testGetRoles(t, e, "eve", []string{})
-	testGetRoles(t, e, "non_exist", []string{})
+	testGetRoles(t, e, []string{"data2_admin"}, "alice")
+	testGetRoles(t, e, []string{}, "bob")
+	testGetRoles(t, e, []string{}, "eve")
+	testGetRoles(t, e, []string{}, "non_exist")
 
 	e.RemoveGroupingPolicy("alice", "data2_admin")
 	e.AddGroupingPolicy("bob", "data1_admin")
 	e.AddGroupingPolicy("eve", "data3_admin")
 
+	groupingRules := [][]string{
+		{"ham", "data4_admin"},
+		{"jack", "data5_admin"},
+	}
+
+	e.AddGroupingPolicies(groupingRules)
+	testGetRoles(t, e, []string{"data4_admin"}, "ham")
+	testGetRoles(t, e, []string{"data5_admin"}, "jack")
+	e.RemoveGroupingPolicies(groupingRules)
+
+	testGetRoles(t, e, []string{}, "alice")
 	namedGroupingPolicy := []string{"alice", "data2_admin"}
-	testGetRoles(t, e, "alice", []string{})
+	testGetRoles(t, e, []string{}, "alice")
 	e.AddNamedGroupingPolicy("g", namedGroupingPolicy)
-	testGetRoles(t, e, "alice", []string{"data2_admin"})
+	testGetRoles(t, e, []string{"data2_admin"}, "alice")
 	e.RemoveNamedGroupingPolicy("g", namedGroupingPolicy)
 
-	testGetRoles(t, e, "alice", []string{})
-	testGetRoles(t, e, "bob", []string{"data1_admin"})
-	testGetRoles(t, e, "eve", []string{"data3_admin"})
-	testGetRoles(t, e, "non_exist", []string{})
+	e.AddNamedGroupingPolicies("g", groupingRules)
+	e.AddNamedGroupingPolicies("g", groupingRules)
+	testGetRoles(t, e, []string{"data4_admin"}, "ham")
+	testGetRoles(t, e, []string{"data5_admin"}, "jack")
+	e.RemoveNamedGroupingPolicies("g", groupingRules)
+	e.RemoveNamedGroupingPolicies("g", groupingRules)
 
-	testGetUsers(t, e, "data1_admin", []string{"bob"})
-	testGetUsers(t, e, "data2_admin", []string{})
-	testGetUsers(t, e, "data3_admin", []string{"eve"})
+	testGetRoles(t, e, []string{}, "alice")
+	testGetRoles(t, e, []string{"data1_admin"}, "bob")
+	testGetRoles(t, e, []string{"data3_admin"}, "eve")
+	testGetRoles(t, e, []string{}, "non_exist")
+
+	testGetUsers(t, e, []string{"bob"}, "data1_admin")
+	testGetUsers(t, e, []string{}, "data2_admin")
+	testGetUsers(t, e, []string{"eve"}, "data3_admin")
 
 	e.RemoveFilteredGroupingPolicy(0, "bob")
 
-	testGetRoles(t, e, "alice", []string{})
-	testGetRoles(t, e, "bob", []string{})
-	testGetRoles(t, e, "eve", []string{"data3_admin"})
-	testGetRoles(t, e, "non_exist", []string{})
+	testGetRoles(t, e, []string{}, "alice")
+	testGetRoles(t, e, []string{}, "bob")
+	testGetRoles(t, e, []string{"data3_admin"}, "eve")
+	testGetRoles(t, e, []string{}, "non_exist")
 
-	testGetUsers(t, e, "data1_admin", []string{})
-	testGetUsers(t, e, "data2_admin", []string{})
-	testGetUsers(t, e, "data3_admin", []string{"eve"})
+	testGetUsers(t, e, []string{}, "data1_admin")
+	testGetUsers(t, e, []string{}, "data2_admin")
+	testGetUsers(t, e, []string{"eve"}, "data3_admin")
 }

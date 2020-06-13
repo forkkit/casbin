@@ -20,6 +20,23 @@ import (
 	"github.com/casbin/casbin/v2/util"
 )
 
+type (
+	PolicyOp int
+)
+
+const (
+	PolicyAdd PolicyOp = iota
+	PolicyRemove
+)
+
+// BuildIncrementalRoleLinks provides incremental build the role inheritance relations.
+func (model Model) BuildIncrementalRoleLinks(rm rbac.RoleManager, op PolicyOp, sec string, ptype string, rules [][]string) error {
+	if sec == "g" {
+		return model[sec][ptype].buildIncrementalRoleLinks(rm, op, rules)
+	}
+	return nil
+}
+
 // BuildRoleLinks initializes the roles in RBAC.
 func (model Model) BuildRoleLinks(rm rbac.RoleManager) error {
 	for _, ast := range model["g"] {
@@ -92,13 +109,27 @@ func (model Model) HasPolicy(sec string, ptype string, rule []string) bool {
 	return false
 }
 
-// AddPolicy adds a policy rule to the model.
-func (model Model) AddPolicy(sec string, ptype string, rule []string) bool {
-	if !model.HasPolicy(sec, ptype, rule) {
-		model[sec][ptype].Policy = append(model[sec][ptype].Policy, rule)
-		return true
+// HasPolicies determines whether a model has any of the specified policies. If one is found we return false.
+func (model Model) HasPolicies(sec string, ptype string, rules [][]string) bool {
+	for i := 0; i < len(rules); i++ {
+		if model.HasPolicy(sec, ptype, rules[i]) {
+			return true
+		}
 	}
+
 	return false
+}
+
+// AddPolicy adds a policy rule to the model.
+func (model Model) AddPolicy(sec string, ptype string, rule []string) {
+	model[sec][ptype].Policy = append(model[sec][ptype].Policy, rule)
+}
+
+// AddPolicies adds policy rules to the model.
+func (model Model) AddPolicies(sec string, ptype string, rules [][]string) {
+	for i := 0; i < len(rules); i++ {
+		model[sec][ptype].Policy = append(model[sec][ptype].Policy, rules[i])
+	}
 }
 
 // RemovePolicy removes a policy rule from the model.
@@ -113,9 +144,22 @@ func (model Model) RemovePolicy(sec string, ptype string, rule []string) bool {
 	return false
 }
 
+// RemovePolicies removes policy rules from the model.
+func (model Model) RemovePolicies(sec string, ptype string, rules [][]string) bool {
+	for j := 0; j < len(rules); j++ {
+		for i, r := range model[sec][ptype].Policy {
+			if util.ArrayEquals(rules[j], r) {
+				model[sec][ptype].Policy = append(model[sec][ptype].Policy[:i], model[sec][ptype].Policy[i+1:]...)
+			}
+		}
+	}
+	return true
+}
+
 // RemoveFilteredPolicy removes policy rules based on field filters from the model.
-func (model Model) RemoveFilteredPolicy(sec string, ptype string, fieldIndex int, fieldValues ...string) bool {
-	tmp := [][]string{}
+func (model Model) RemoveFilteredPolicy(sec string, ptype string, fieldIndex int, fieldValues ...string) (bool, [][]string) {
+	var tmp [][]string
+	var effects [][]string
 	res := false
 	for _, rule := range model[sec][ptype].Policy {
 		matched := true
@@ -127,6 +171,7 @@ func (model Model) RemoveFilteredPolicy(sec string, ptype string, fieldIndex int
 		}
 
 		if matched {
+			effects = append(effects, rule)
 			res = true
 		} else {
 			tmp = append(tmp, rule)
@@ -134,7 +179,7 @@ func (model Model) RemoveFilteredPolicy(sec string, ptype string, fieldIndex int
 	}
 
 	model[sec][ptype].Policy = tmp
-	return res
+	return res, effects
 }
 
 // GetValuesForFieldInPolicy gets all values for a field for all rules in a policy, duplicated values are removed.
@@ -143,6 +188,19 @@ func (model Model) GetValuesForFieldInPolicy(sec string, ptype string, fieldInde
 
 	for _, rule := range model[sec][ptype].Policy {
 		values = append(values, rule[fieldIndex])
+	}
+
+	util.ArrayRemoveDuplicates(&values)
+
+	return values
+}
+
+// GetValuesForFieldInPolicyAllTypes gets all values for a field for all rules in a policy of all ptypes, duplicated values are removed.
+func (model Model) GetValuesForFieldInPolicyAllTypes(sec string, fieldIndex int) []string {
+	values := []string{}
+
+	for ptype := range model[sec] {
+		values = append(values, model.GetValuesForFieldInPolicy(sec, ptype, fieldIndex)...)
 	}
 
 	util.ArrayRemoveDuplicates(&values)

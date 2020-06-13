@@ -15,17 +15,17 @@
 package casbin
 
 // GetRolesForUser gets the roles that a user has.
-func (e *SyncedEnforcer) GetRolesForUser(name string) ([]string, error) {
+func (e *SyncedEnforcer) GetRolesForUser(name string, domain ...string) ([]string, error) {
 	e.m.RLock()
 	defer e.m.RUnlock()
-	return e.Enforcer.GetRolesForUser(name)
+	return e.Enforcer.GetRolesForUser(name, domain...)
 }
 
 // GetUsersForRole gets the users that has a role.
-func (e *SyncedEnforcer) GetUsersForRole(name string) ([]string, error) {
+func (e *SyncedEnforcer) GetUsersForRole(name string, domain ...string) ([]string, error) {
 	e.m.RLock()
 	defer e.m.RUnlock()
-	return e.Enforcer.GetUsersForRole(name)
+	return e.Enforcer.GetUsersForRole(name, domain...)
 }
 
 // HasRoleForUser determines whether a user has a role.
@@ -68,10 +68,11 @@ func (e *SyncedEnforcer) DeleteUser(user string) (bool, error) {
 }
 
 // DeleteRole deletes a role.
-func (e *SyncedEnforcer) DeleteRole(role string) {
+// Returns false if the role does not exist (aka not affected).
+func (e *SyncedEnforcer) DeleteRole(role string) (bool, error) {
 	e.m.Lock()
 	defer e.m.Unlock()
-	e.Enforcer.DeleteRole(role)
+	return e.Enforcer.DeleteRole(role)
 }
 
 // DeletePermission deletes a permission.

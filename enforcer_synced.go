@@ -15,18 +15,20 @@
 package casbin
 
 import (
-	"log"
 	"sync"
 	"time"
 
+	"github.com/Knetic/govaluate"
+	"github.com/casbin/casbin/v2/log"
 	"github.com/casbin/casbin/v2/persist"
 )
 
 // SyncedEnforcer wraps Enforcer and provides synchronized access
 type SyncedEnforcer struct {
 	*Enforcer
-	m        sync.RWMutex
-	autoLoad bool
+	m               sync.RWMutex
+	stopAutoLoad    chan struct{}
+	autoLoadRunning bool
 }
 
 // NewSyncedEnforcer creates a synchronized enforcer via file or DB.
@@ -38,35 +40,46 @@ func NewSyncedEnforcer(params ...interface{}) (*SyncedEnforcer, error) {
 		return nil, err
 	}
 
-	e.autoLoad = false
+	e.stopAutoLoad = make(chan struct{}, 1)
 	return e, nil
 }
 
 // StartAutoLoadPolicy starts a go routine that will every specified duration call LoadPolicy
 func (e *SyncedEnforcer) StartAutoLoadPolicy(d time.Duration) {
-	e.autoLoad = true
+	// Don't start another goroutine if there is already one running
+	if e.autoLoadRunning {
+		return
+	}
+	e.autoLoadRunning = true
+	ticker := time.NewTicker(d)
 	go func() {
+		defer func() {
+			ticker.Stop()
+			e.autoLoadRunning = false
+		}()
 		n := 1
-		log.Print("Start automatically load policy")
+		log.LogPrintf("Start automatically load policy")
 		for {
-			if !e.autoLoad {
-				log.Print("Stop automatically load policy")
-				break
+			select {
+			case <-ticker.C:
+				// error intentionally ignored
+				_ = e.LoadPolicy()
+				// Uncomment this line to see when the policy is loaded.
+				// log.Print("Load policy for time: ", n)
+				n++
+			case <-e.stopAutoLoad:
+				log.LogPrintf("Stop automatically load policy")
+				return
 			}
-
-			// error intentionally ignored
-			e.LoadPolicy()
-			// Uncomment this line to see when the policy is loaded.
-			// log.Print("Load policy for time: ", n)
-			n++
-			time.Sleep(d)
 		}
 	}()
 }
 
 // StopAutoLoadPolicy causes the go routine to exit.
 func (e *SyncedEnforcer) StopAutoLoadPolicy() {
-	e.autoLoad = false
+	if e.autoLoadRunning {
+		e.stopAutoLoad <- struct{}{}
+	}
 }
 
 // SetWatcher sets the current watcher.
@@ -87,6 +100,13 @@ func (e *SyncedEnforcer) LoadPolicy() error {
 	e.m.Lock()
 	defer e.m.Unlock()
 	return e.Enforcer.LoadPolicy()
+}
+
+// LoadFilteredPolicy reloads a filtered policy from file/database.
+func (e *SyncedEnforcer) LoadFilteredPolicy(filter interface{}) error {
+	e.m.Lock()
+	defer e.m.Unlock()
+	return e.Enforcer.LoadFilteredPolicy(filter)
 }
 
 // SavePolicy saves the current policy (usually after changed with Casbin API) back to file/database.
@@ -343,7 +363,7 @@ func (e *SyncedEnforcer) RemoveFilteredNamedGroupingPolicy(ptype string, fieldIn
 }
 
 // AddFunction adds a customized function.
-func (e *SyncedEnforcer) AddFunction(name string, function func(args ...interface{}) (interface{}, error)) {
+func (e *SyncedEnforcer) AddFunction(name string, function govaluate.ExpressionFunction) {
 	e.m.Lock()
 	defer e.m.Unlock()
 	e.Enforcer.AddFunction(name, function)

@@ -17,13 +17,13 @@ package casbin
 import (
 	"testing"
 
-	"github.com/casbin/casbin/v2/persist/file-adapter"
+	fileadapter "github.com/casbin/casbin/v2/persist/file-adapter"
 	"github.com/casbin/casbin/v2/rbac"
-	"github.com/casbin/casbin/v2/rbac/default-role-manager"
+	defaultrolemanager "github.com/casbin/casbin/v2/rbac/default-role-manager"
 	"github.com/casbin/casbin/v2/util"
 )
 
-func testEnforce(t *testing.T, e *Enforcer, sub string, obj interface{}, act string, res bool) {
+func testEnforce(t *testing.T, e *Enforcer, sub interface{}, obj interface{}, act string, res bool) {
 	t.Helper()
 	if myRes, _ := e.Enforce(sub, obj, act); myRes != res {
 		t.Errorf("%s, %v, %s: %t, supposed to be %t", sub, obj, act, myRes, res)
@@ -46,6 +46,19 @@ func testDomainEnforce(t *testing.T, e *Enforcer, sub string, dom string, obj st
 
 func TestBasicModel(t *testing.T) {
 	e, _ := NewEnforcer("examples/basic_model.conf", "examples/basic_policy.csv")
+
+	testEnforce(t, e, "alice", "data1", "read", true)
+	testEnforce(t, e, "alice", "data1", "write", false)
+	testEnforce(t, e, "alice", "data2", "read", false)
+	testEnforce(t, e, "alice", "data2", "write", false)
+	testEnforce(t, e, "bob", "data1", "read", false)
+	testEnforce(t, e, "bob", "data1", "write", false)
+	testEnforce(t, e, "bob", "data2", "read", false)
+	testEnforce(t, e, "bob", "data2", "write", true)
+}
+
+func TestBasicModelWithoutSpaces(t *testing.T) {
+	e, _ := NewEnforcer("examples/basic_model_without_spaces.conf", "examples/basic_policy.csv")
 
 	testEnforce(t, e, "alice", "data1", "read", true)
 	testEnforce(t, e, "alice", "data1", "write", false)
@@ -465,6 +478,25 @@ func TestIPMatchModel(t *testing.T) {
 	testEnforce(t, e, "192.168.0.1", "data2", "write", false)
 }
 
+func TestGlobMatchModel(t *testing.T) {
+	e, _ := NewEnforcer("examples/glob_model.conf", "examples/glob_policy.csv")
+	testEnforce(t, e, "u1", "/foo/", "read", true)
+	testEnforce(t, e, "u1", "/foo", "read", false)
+	testEnforce(t, e, "u1", "/foo/subprefix", "read", true)
+	testEnforce(t, e, "u1", "foo", "read", false)
+
+	testEnforce(t, e, "u2", "/foosubprefix", "read", true)
+	testEnforce(t, e, "u2", "/foo/subprefix", "read", false)
+	testEnforce(t, e, "u2", "foo", "read", false)
+
+	testEnforce(t, e, "u3", "/prefix/foo/subprefix", "read", true)
+	testEnforce(t, e, "u3", "/prefix/foo/", "read", true)
+	testEnforce(t, e, "u3", "/prefix/foo", "read", false)
+
+	testEnforce(t, e, "u4", "/foo", "read", false)
+	testEnforce(t, e, "u4", "foo", "read", true)
+}
+
 func TestPriorityModel(t *testing.T) {
 	e, _ := NewEnforcer("examples/priority_model.conf", "examples/priority_policy.csv")
 
@@ -491,6 +523,51 @@ func TestRBACModelInMultiLines(t *testing.T) {
 	testEnforce(t, e, "alice", "data1", "write", false)
 	testEnforce(t, e, "alice", "data2", "read", true)
 	testEnforce(t, e, "alice", "data2", "write", true)
+	testEnforce(t, e, "bob", "data1", "read", false)
+	testEnforce(t, e, "bob", "data1", "write", false)
+	testEnforce(t, e, "bob", "data2", "read", false)
+	testEnforce(t, e, "bob", "data2", "write", true)
+}
+
+type testSub struct {
+	Name string
+	Age  int
+}
+
+func newTestSubject(name string, age int) testSub {
+	s := testSub{}
+	s.Name = name
+	s.Age = age
+	return s
+}
+
+func TestABACPolicy(t *testing.T) {
+	e, _ := NewEnforcer("examples/abac_rule_model.conf", "examples/abac_rule_policy.csv")
+	sub1 := newTestSubject("alice", 16)
+	sub2 := newTestSubject("alice", 20)
+	sub3 := newTestSubject("alice", 65)
+
+	testEnforce(t, e, sub1, "/data1", "read", false)
+	testEnforce(t, e, sub1, "/data2", "read", false)
+	testEnforce(t, e, sub1, "/data1", "write", false)
+	testEnforce(t, e, sub1, "/data2", "write", true)
+	testEnforce(t, e, sub2, "/data1", "read", true)
+	testEnforce(t, e, sub2, "/data2", "read", false)
+	testEnforce(t, e, sub2, "/data1", "write", false)
+	testEnforce(t, e, sub2, "/data2", "write", true)
+	testEnforce(t, e, sub3, "/data1", "read", true)
+	testEnforce(t, e, sub3, "/data2", "read", false)
+	testEnforce(t, e, sub3, "/data1", "write", false)
+	testEnforce(t, e, sub3, "/data2", "write", false)
+}
+
+func TestCommentModel(t *testing.T) {
+	e, _ := NewEnforcer("examples/comment_model.conf", "examples/basic_policy.csv")
+
+	testEnforce(t, e, "alice", "data1", "read", true)
+	testEnforce(t, e, "alice", "data1", "write", false)
+	testEnforce(t, e, "alice", "data2", "read", false)
+	testEnforce(t, e, "alice", "data2", "write", false)
 	testEnforce(t, e, "bob", "data1", "read", false)
 	testEnforce(t, e, "bob", "data1", "write", false)
 	testEnforce(t, e, "bob", "data2", "read", false)

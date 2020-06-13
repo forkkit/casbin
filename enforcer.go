@@ -44,20 +44,27 @@ type Enforcer struct {
 	enabled            bool
 	autoSave           bool
 	autoBuildRoleLinks bool
+	autoNotifyWatcher  bool
 }
 
 // NewEnforcer creates an enforcer via file or DB.
+//
 // File:
-// e := casbin.NewEnforcer("path/to/basic_model.conf", "path/to/basic_policy.csv")
+//
+// 	e := casbin.NewEnforcer("path/to/basic_model.conf", "path/to/basic_policy.csv")
+//
 // MySQL DB:
-// a := mysqladapter.NewDBAdapter("mysql", "mysql_username:mysql_password@tcp(127.0.0.1:3306)/")
-// e := casbin.NewEnforcer("path/to/basic_model.conf", a)
+//
+// 	a := mysqladapter.NewDBAdapter("mysql", "mysql_username:mysql_password@tcp(127.0.0.1:3306)/")
+// 	e := casbin.NewEnforcer("path/to/basic_model.conf", a)
+//
 func NewEnforcer(params ...interface{}) (*Enforcer, error) {
 	e := &Enforcer{}
 
 	parsedParamLen := 0
-	if len(params) >= 1 {
-		enableLog, ok := params[len(params)-1].(bool)
+	paramLen := len(params)
+	if paramLen >= 1 {
+		enableLog, ok := params[paramLen-1].(bool)
 		if ok {
 			e.EnableLog(enableLog)
 
@@ -65,7 +72,7 @@ func NewEnforcer(params ...interface{}) (*Enforcer, error) {
 		}
 	}
 
-	if len(params)-parsedParamLen == 2 {
+	if paramLen-parsedParamLen == 2 {
 		switch p0 := params[0].(type) {
 		case string:
 			switch p1 := params[1].(type) {
@@ -91,7 +98,7 @@ func NewEnforcer(params ...interface{}) (*Enforcer, error) {
 				}
 			}
 		}
-	} else if len(params)-parsedParamLen == 1 {
+	} else if paramLen-parsedParamLen == 1 {
 		switch p0 := params[0].(type) {
 		case string:
 			err := e.InitWithFile(p0, "")
@@ -104,7 +111,7 @@ func NewEnforcer(params ...interface{}) (*Enforcer, error) {
 				return nil, err
 			}
 		}
-	} else if len(params)-parsedParamLen == 0 {
+	} else if paramLen-parsedParamLen == 0 {
 		return e, nil
 	} else {
 		return nil, errors.New("invalid parameters for enforcer")
@@ -165,6 +172,7 @@ func (e *Enforcer) initialize() {
 	e.enabled = true
 	e.autoSave = true
 	e.autoBuildRoleLinks = true
+	e.autoNotifyWatcher = true
 }
 
 // LoadModel reloads the model from the model CONF file.
@@ -211,6 +219,11 @@ func (e *Enforcer) SetAdapter(adapter persist.Adapter) {
 func (e *Enforcer) SetWatcher(watcher persist.Watcher) error {
 	e.watcher = watcher
 	return watcher.SetUpdateCallback(func(string) { e.LoadPolicy() })
+}
+
+// GetRoleManager gets the current role manager.
+func (e *Enforcer) GetRoleManager() rbac.RoleManager {
+	return e.rm
 }
 
 // SetRoleManager sets the current role manager.
@@ -290,7 +303,13 @@ func (e *Enforcer) SavePolicy() error {
 		return err
 	}
 	if e.watcher != nil {
-		return e.watcher.Update()
+		var err error
+		if watcher, ok := e.watcher.(persist.WatcherEx); ok {
+			err = watcher.UpdateForSavePolicy(e.model)
+		} else {
+			err = e.watcher.Update()
+		}
+		return err
 	}
 	return nil
 }
@@ -303,6 +322,11 @@ func (e *Enforcer) EnableEnforce(enable bool) {
 // EnableLog changes whether Casbin will log messages to the Logger.
 func (e *Enforcer) EnableLog(enable bool) {
 	log.GetLogger().EnableLog(enable)
+}
+
+// EnableAutoNotifyWatcher controls whether to save a policy rule automatically notify the Watcher when it is added or removed.
+func (e *Enforcer) EnableAutoNotifyWatcher(enable bool) {
+	e.autoNotifyWatcher = enable
 }
 
 // EnableAutoSave controls whether to save a policy rule automatically to the adapter when it is added or removed.
@@ -325,15 +349,26 @@ func (e *Enforcer) BuildRoleLinks() error {
 	return e.model.BuildRoleLinks(e.rm)
 }
 
+// BuildIncrementalRoleLinks provides incremental build the role inheritance relations.
+func (e *Enforcer) BuildIncrementalRoleLinks(op model.PolicyOp, ptype string, rules [][]string) error {
+	return e.model.BuildIncrementalRoleLinks(e.rm, op, "g", ptype, rules)
+}
+
 // enforce use a custom matcher to decides whether a "subject" can access a "object" with the operation "action", input parameters are usually: (matcher, sub, obj, act), use model matcher by default when matcher is "".
-func (e *Enforcer) enforce(matcher string, rvals ...interface{}) (bool, error) {
+func (e *Enforcer) enforce(matcher string, explains *[]string, rvals ...interface{}) (ok bool, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+
 	if !e.enabled {
 		return true, nil
 	}
 
-	functions := make(map[string]govaluate.ExpressionFunction)
-	for key, function := range e.fm {
-		functions[key] = function
+	functions := model.FunctionMap{}
+	for k, v := range e.fm {
+		functions[k] = v
 	}
 	if _, ok := e.model["g"]; ok {
 		for key, ast := range e.model["g"] {
@@ -345,11 +380,17 @@ func (e *Enforcer) enforce(matcher string, rvals ...interface{}) (bool, error) {
 	if matcher == "" {
 		expString = e.model["m"]["m"].Value
 	} else {
-		expString = matcher
+		expString = util.RemoveComments(util.EscapeAssertion(matcher))
 	}
-	expression, err := govaluate.NewEvaluableExpressionWithFunctions(expString, functions)
-	if err != nil {
-		return false, err
+
+	var expression *govaluate.EvaluableExpression
+	hasEval := util.HasEval(expString)
+
+	if !hasEval {
+		expression, err = govaluate.NewEvaluableExpressionWithFunctions(expString, functions)
+		if err != nil {
+			return false, err
+		}
 	}
 
 	rTokens := make(map[string]int, len(e.model["r"]["r"].Tokens))
@@ -370,6 +411,7 @@ func (e *Enforcer) enforce(matcher string, rvals ...interface{}) (bool, error) {
 
 	var policyEffects []effect.Effect
 	var matcherResults []float64
+
 	if policyLen := len(e.model["p"]["p"].Policy); policyLen != 0 {
 		policyEffects = make([]effect.Effect, policyLen)
 		matcherResults = make([]float64, policyLen)
@@ -391,6 +433,25 @@ func (e *Enforcer) enforce(matcher string, rvals ...interface{}) (bool, error) {
 			}
 
 			parameters.pVals = pvals
+
+			if hasEval {
+				ruleNames := util.GetEvalValue(expString)
+				var expWithRule = expString
+				for _, ruleName := range ruleNames {
+					if j, ok := parameters.pTokens[ruleName]; ok {
+						rule := util.EscapeAssertion(pvals[j])
+						expWithRule = util.ReplaceEval(expWithRule, rule)
+					} else {
+						return false, errors.New("please make sure rule exists in policy when using eval() in matcher")
+					}
+
+					expression, err = govaluate.NewEvaluableExpressionWithFunctions(expWithRule, functions)
+					if err != nil {
+						return false, fmt.Errorf("p.sub_rule should satisfy the syntax of matcher: %s", err)
+					}
+				}
+
+			}
 
 			result, err := expression.Eval(parameters)
 			// log.LogPrint("Result: ", result)
@@ -456,9 +517,15 @@ func (e *Enforcer) enforce(matcher string, rvals ...interface{}) (bool, error) {
 
 	// log.LogPrint("Rule Results: ", policyEffects)
 
-	result, err := e.eft.MergeEffects(e.model["e"]["e"].Value, policyEffects, matcherResults)
+	result, explainIndex, err := e.eft.MergeEffects(e.model["e"]["e"].Value, policyEffects, matcherResults)
 	if err != nil {
 		return false, err
+	}
+
+	if explains != nil {
+		if explainIndex != -1 {
+			*explains = e.model["p"]["p"].Policy[explainIndex]
+		}
 	}
 
 	// Log request.
@@ -472,7 +539,20 @@ func (e *Enforcer) enforce(matcher string, rvals ...interface{}) (bool, error) {
 				reqStr.WriteString(fmt.Sprintf("%v", rval))
 			}
 		}
-		reqStr.WriteString(fmt.Sprintf(" ---> %t", result))
+		reqStr.WriteString(fmt.Sprintf(" ---> %t\n", result))
+
+		if explains != nil {
+			reqStr.WriteString("Hit Policy: ")
+			for i, pval := range *explains {
+				if i != len(*explains)-1 {
+					reqStr.WriteString(fmt.Sprintf("%v, ", pval))
+				} else {
+					reqStr.WriteString(fmt.Sprintf("%v \n", pval))
+				}
+			}
+
+		}
+
 		log.LogPrint(reqStr.String())
 	}
 
@@ -481,12 +561,26 @@ func (e *Enforcer) enforce(matcher string, rvals ...interface{}) (bool, error) {
 
 // Enforce decides whether a "subject" can access a "object" with the operation "action", input parameters are usually: (sub, obj, act).
 func (e *Enforcer) Enforce(rvals ...interface{}) (bool, error) {
-	return e.enforce("", rvals...)
+	return e.enforce("", nil, rvals...)
 }
 
 // EnforceWithMatcher use a custom matcher to decides whether a "subject" can access a "object" with the operation "action", input parameters are usually: (matcher, sub, obj, act), use model matcher by default when matcher is "".
 func (e *Enforcer) EnforceWithMatcher(matcher string, rvals ...interface{}) (bool, error) {
-	return e.enforce(matcher, rvals...)
+	return e.enforce(matcher, nil, rvals...)
+}
+
+// EnforceEx explain enforcement by informing matched rules
+func (e *Enforcer) EnforceEx(rvals ...interface{}) (bool, []string, error) {
+	explain := []string{}
+	result, err := e.enforce("", &explain, rvals...)
+	return result, explain, err
+}
+
+// EnforceExWithMatcher use a custom matcher and explain enforcement by informing matched rules
+func (e *Enforcer) EnforceExWithMatcher(matcher string, rvals ...interface{}) (bool, []string, error) {
+	explain := []string{}
+	result, err := e.enforce(matcher, &explain, rvals...)
+	return result, explain, err
 }
 
 // assumes bounds have already been checked
