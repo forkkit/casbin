@@ -218,7 +218,7 @@ func (e *Enforcer) SetAdapter(adapter persist.Adapter) {
 // SetWatcher sets the current watcher.
 func (e *Enforcer) SetWatcher(watcher persist.Watcher) error {
 	e.watcher = watcher
-	return watcher.SetUpdateCallback(func(string) { e.LoadPolicy() })
+	return watcher.SetUpdateCallback(func(string) { _ = e.LoadPolicy() })
 }
 
 // GetRoleManager gets the current role manager.
@@ -248,7 +248,6 @@ func (e *Enforcer) LoadPolicy() error {
 		return err
 	}
 
-	e.model.PrintPolicy()
 	if e.autoBuildRoleLinks {
 		err := e.BuildRoleLinks()
 		if err != nil {
@@ -258,10 +257,7 @@ func (e *Enforcer) LoadPolicy() error {
 	return nil
 }
 
-// LoadFilteredPolicy reloads a filtered policy from file/database.
-func (e *Enforcer) LoadFilteredPolicy(filter interface{}) error {
-	e.model.ClearPolicy()
-
+func (e *Enforcer) loadFilteredPolicy(filter interface{}) error {
 	var filteredAdapter persist.FilteredAdapter
 
 	// Attempt to cast the Adapter as a FilteredAdapter
@@ -283,6 +279,18 @@ func (e *Enforcer) LoadFilteredPolicy(filter interface{}) error {
 		}
 	}
 	return nil
+}
+
+// LoadFilteredPolicy reloads a filtered policy from file/database.
+func (e *Enforcer) LoadFilteredPolicy(filter interface{}) error {
+	e.model.ClearPolicy()
+
+	return e.loadFilteredPolicy(filter)
+}
+
+// LoadIncrementalFilteredPolicy append a filtered policy from file/database.
+func (e *Enforcer) LoadIncrementalFilteredPolicy(filter interface{}) error {
+	return e.loadFilteredPolicy(filter)
 }
 
 // IsFiltered returns true if the loaded policy has been filtered.
@@ -366,10 +374,7 @@ func (e *Enforcer) enforce(matcher string, explains *[]string, rvals ...interfac
 		return true, nil
 	}
 
-	functions := model.FunctionMap{}
-	for k, v := range e.fm {
-		functions[k] = v
-	}
+	functions := e.fm.GetFunctions()
 	if _, ok := e.model["g"]; ok {
 		for key, ast := range e.model["g"] {
 			rm := ast.RM
@@ -496,6 +501,10 @@ func (e *Enforcer) enforce(matcher string, explains *[]string, rvals ...interfac
 
 		}
 	} else {
+		if hasEval && len(e.model["p"]["p"].Policy) == 0 {
+			return false, errors.New("please make sure rule exists in policy when using eval() in matcher")
+		}
+
 		policyEffects = make([]effect.Effect, 1)
 		matcherResults = make([]float64, 1)
 
@@ -523,7 +532,7 @@ func (e *Enforcer) enforce(matcher string, explains *[]string, rvals ...interfac
 	}
 
 	if explains != nil {
-		if explainIndex != -1 {
+		if explainIndex != -1 && len(e.model["p"]["p"].Policy) > explainIndex {
 			*explains = e.model["p"]["p"].Policy[explainIndex]
 		}
 	}

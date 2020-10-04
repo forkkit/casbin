@@ -1,4 +1,4 @@
-// Copyright 2017 The casbin Authors. All Rights Reserved.
+// Copyright 2020 The casbin Authors. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,34 +14,19 @@
 
 package casbin
 
-import "testing"
+import (
+	"encoding/json"
+)
 
-type SampleWatcher struct {
-}
-
-func (w SampleWatcher) Close() {
-}
-
-func (w SampleWatcher) SetUpdateCallback(func(string)) error {
-	return nil
-}
-
-func (w SampleWatcher) Update() error {
-	return nil
-}
-
-func TestSetWatcher(t *testing.T) {
-	e, err := NewEnforcer("examples/rbac_model.conf", "examples/rbac_policy.csv")
+func CasbinJsGetPermissionForUser(e IEnforcer, user string) ([]byte, error) {
+	policy, err := e.GetImplicitPermissionsForUser(user)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
-	sampleWatcher := SampleWatcher{}
-	err = e.SetWatcher(sampleWatcher)
-	if err != nil {
-		t.Fatal(err)
+	permission := make(map[string][]string)
+	for i := 0; i < len(policy); i++ {
+		permission[policy[i][2]] = append(permission[policy[i][2]], policy[i][1])
 	}
-	err = e.SavePolicy() //calls watcher.Update()
-	if err != nil {
-		t.Fatal(err)
-	}
+	b, _ := json.Marshal(permission)
+	return b, nil
 }

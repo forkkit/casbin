@@ -17,14 +17,14 @@ package casbin
 import (
 	"testing"
 
-	"github.com/casbin/casbin/v2/persist/file-adapter"
+	fileadapter "github.com/casbin/casbin/v2/persist/file-adapter"
 )
 
 func TestInitFilteredAdapter(t *testing.T) {
 	e, _ := NewEnforcer()
 
 	adapter := fileadapter.NewFilteredAdapter("examples/rbac_with_domains_policy.csv")
-	e.InitWithAdapter("examples/rbac_with_domains_model.conf", adapter)
+	_ = e.InitWithAdapter("examples/rbac_with_domains_model.conf", adapter)
 
 	// policy should not be loaded yet
 	testHasPolicy(t, e, []string{"admin", "domain1", "data1", "read"}, false)
@@ -34,7 +34,7 @@ func TestLoadFilteredPolicy(t *testing.T) {
 	e, _ := NewEnforcer()
 
 	adapter := fileadapter.NewFilteredAdapter("examples/rbac_with_domains_policy.csv")
-	e.InitWithAdapter("examples/rbac_with_domains_model.conf", adapter)
+	_ = e.InitWithAdapter("examples/rbac_with_domains_model.conf", adapter)
 	if err := e.LoadPolicy(); err != nil {
 		t.Errorf("unexpected error in LoadPolicy: %v", err)
 	}
@@ -65,11 +65,51 @@ func TestLoadFilteredPolicy(t *testing.T) {
 	}
 }
 
+func TestAppendFilteredPolicy(t *testing.T) {
+	e, _ := NewEnforcer()
+
+	adapter := fileadapter.NewFilteredAdapter("examples/rbac_with_domains_policy.csv")
+	_ = e.InitWithAdapter("examples/rbac_with_domains_model.conf", adapter)
+	if err := e.LoadPolicy(); err != nil {
+		t.Errorf("unexpected error in LoadPolicy: %v", err)
+	}
+
+	// validate initial conditions
+	testHasPolicy(t, e, []string{"admin", "domain1", "data1", "read"}, true)
+	testHasPolicy(t, e, []string{"admin", "domain2", "data2", "read"}, true)
+
+	if err := e.LoadFilteredPolicy(&fileadapter.Filter{
+		P: []string{"", "domain1"},
+		G: []string{"", "", "domain1"},
+	}); err != nil {
+		t.Errorf("unexpected error in LoadFilteredPolicy: %v", err)
+	}
+	if !e.IsFiltered() {
+		t.Errorf("adapter did not set the filtered flag correctly")
+	}
+
+	// only policies for domain1 should be loaded
+	testHasPolicy(t, e, []string{"admin", "domain1", "data1", "read"}, true)
+	testHasPolicy(t, e, []string{"admin", "domain2", "data2", "read"}, false)
+
+	//disable clear policy and load second domain
+	if err := e.LoadIncrementalFilteredPolicy(&fileadapter.Filter{
+		P: []string{"", "domain2"},
+		G: []string{"", "", "domain2"},
+	}); err != nil {
+		t.Errorf("unexpected error in LoadFilteredPolicy: %v", err)
+	}
+
+	//both domain policies should be loaded
+	testHasPolicy(t, e, []string{"admin", "domain1", "data1", "read"}, true)
+	testHasPolicy(t, e, []string{"admin", "domain2", "data2", "read"}, true)
+}
+
 func TestFilteredPolicyInvalidFilter(t *testing.T) {
 	e, _ := NewEnforcer()
 
 	adapter := fileadapter.NewFilteredAdapter("examples/rbac_with_domains_policy.csv")
-	e.InitWithAdapter("examples/rbac_with_domains_model.conf", adapter)
+	_ = e.InitWithAdapter("examples/rbac_with_domains_model.conf", adapter)
 
 	if err := e.LoadFilteredPolicy([]string{"", "domain1"}); err == nil {
 		t.Errorf("expected error in LoadFilteredPolicy, but got nil")
@@ -80,7 +120,7 @@ func TestFilteredPolicyEmptyFilter(t *testing.T) {
 	e, _ := NewEnforcer()
 
 	adapter := fileadapter.NewFilteredAdapter("examples/rbac_with_domains_policy.csv")
-	e.InitWithAdapter("examples/rbac_with_domains_model.conf", adapter)
+	_ = e.InitWithAdapter("examples/rbac_with_domains_model.conf", adapter)
 
 	if err := e.LoadFilteredPolicy(nil); err != nil {
 		t.Errorf("unexpected error in LoadFilteredPolicy: %v", err)
@@ -109,7 +149,7 @@ func TestFilteredAdapterEmptyFilepath(t *testing.T) {
 	e, _ := NewEnforcer()
 
 	adapter := fileadapter.NewFilteredAdapter("")
-	e.InitWithAdapter("examples/rbac_with_domains_model.conf", adapter)
+	_ = e.InitWithAdapter("examples/rbac_with_domains_model.conf", adapter)
 
 	if err := e.LoadFilteredPolicy(nil); err != nil {
 		t.Errorf("unexpected error in LoadFilteredPolicy: %v", err)
@@ -120,7 +160,7 @@ func TestFilteredAdapterInvalidFilepath(t *testing.T) {
 	e, _ := NewEnforcer()
 
 	adapter := fileadapter.NewFilteredAdapter("examples/does_not_exist_policy.csv")
-	e.InitWithAdapter("examples/rbac_with_domains_model.conf", adapter)
+	_ = e.InitWithAdapter("examples/rbac_with_domains_model.conf", adapter)
 
 	if err := e.LoadFilteredPolicy(nil); err == nil {
 		t.Errorf("expected error in LoadFilteredPolicy, but got nil")
